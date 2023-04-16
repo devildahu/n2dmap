@@ -11,5 +11,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-bevy = { workspace = true }
+bevy = { workspace = true, default-features = false, features = ["bevy_pbr", "bevy_asset"] }
+image = { workspace = true }
 n2dmap = { path = "../n2dmap" }

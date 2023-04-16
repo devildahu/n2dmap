@@ -3,6 +3,10 @@
 Crates to handle conversion from **normal** map (n) **to depth** map (d)
 in bevy and outside of bevy.
 
+This crate is very much just a wrapper around the `fft2d` [normal integration
+example][fft2d-n2d], with additional improvements, mostly to make it work
+nicely with bevy.
+
 ### [`n2dmap`]
 
 A small wrapper around the [`fft2d`] crate to convert normal maps in depth maps.

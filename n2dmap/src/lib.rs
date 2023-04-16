@@ -11,12 +11,14 @@ pub type DepthMap = ImageBuffer<Luma<u8>, Vec<u8>>;
 
 fn limited_range(values: &[f32], nth: usize) -> (f32, f32) {
     let mut sorted = values.to_vec();
+    // TODO(rayon): parallelize
     sorted.sort_unstable_by(f32::total_cmp);
     (sorted[nth], sorted[sorted.len() - 1 - nth])
 }
-pub fn normal_to_depth(normal_map: NormalMap) -> Result<DepthMap, Box<dyn Error>> {
+
+pub fn normal_to_depth(normal_map: &NormalMap) -> Result<DepthMap, Box<dyn Error>> {
     // Extract normals.
-    let mut normals = matrix_from_rgb_image(&normal_map, |x| *x as f32 / 255.0);
+    let mut normals = matrix_from_rgb_image(normal_map, |x| *x as f32 / 255.0);
     for n in normals.iter_mut() {
         if n.x + n.y + n.z != 0.0 {
             n.x = (n.x - 0.5) * 2.0;
@@ -137,6 +139,7 @@ fn dct_poisson(p: &DMatrix<f32>, q: &DMatrix<f32>) -> DMatrix<f32> {
 
     // Cosine transform of f.
     // WARNING: a transposition occurs here with the dct2d.
+    // TODO(rayon): parallelize (PR to upstream)
     let mut f_cos = dct_2d(f.map(|x| x as f64));
 
     // Cosine transform of z (Eq. 55 in [1])
@@ -149,12 +152,14 @@ fn dct_poisson(p: &DMatrix<f32>, q: &DMatrix<f32>) -> DMatrix<f32> {
     }
 
     // Inverse cosine transform:
+    // TODO(rayon): parallelize (PR to upstream)
     let depths = idct_2d(f_cos);
 
     // Z is known up to a positive constant, so offset it to get from 0 to max.
     // Also apply a normalization for the dct2d and idct2d.
     let z_min = depths.min();
     let dct_norm_coef = 4.0 / (nrows * ncols) as f32;
+    // TODO(rayon): parallelize
     depths.map(|z| dct_norm_coef * (z - z_min) as f32)
 }
 
@@ -187,14 +192,10 @@ where
 
 /// Convert an RGB image into a `Vector3<T>` RGB matrix.
 /// Inverse operation of `rgb_from_matrix`.
-fn matrix_from_rgb_image<'a, T, F, U>(
-    img: &'a ImageBuffer<Rgb<T>, Vec<T>>,
-    scale: F,
-) -> DMatrix<Vector3<U>>
+fn matrix_from_rgb_image<'a, F, U>(img: &'a NormalMap, scale: F) -> DMatrix<Vector3<U>>
 where
-    T: 'static + Primitive,
     U: Scalar,
-    F: Fn(&'a T) -> U,
+    F: Fn(&'a u8) -> U,
 {
     // TODO: improve the suboptimal allocation in addition to transposition.
     let (width, height) = img.dimensions();

@@ -13,7 +13,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     let normal_map = image::open(&args.input_file)?.into_rgb8();
-    let depth_map = normal_to_depth(normal_map)?;
+    let depth_map = normal_to_depth(&normal_map)?;
     depth_map.save(&args.output_file)?;
     Ok(())
 }
