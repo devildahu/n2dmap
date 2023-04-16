@@ -9,6 +9,11 @@ use nalgebra::{DMatrix, Scalar, Vector2, Vector3};
 pub type NormalMap = ImageBuffer<Rgb<u8>, Vec<u8>>;
 pub type DepthMap = ImageBuffer<Luma<u8>, Vec<u8>>;
 
+fn limited_range(values: &[f32], nth: usize) -> (f32, f32) {
+    let mut sorted = values.to_vec();
+    sorted.sort_unstable_by(f32::total_cmp);
+    (sorted[nth], sorted[sorted.len() - 1 - nth])
+}
 pub fn normal_to_depth(normal_map: NormalMap) -> Result<DepthMap, Box<dyn Error>> {
     // Extract normals.
     let mut normals = matrix_from_rgb_image(&normal_map, |x| *x as f32 / 255.0);
@@ -22,18 +27,13 @@ pub fn normal_to_depth(normal_map: NormalMap) -> Result<DepthMap, Box<dyn Error>
     }
     let depths = normal_integration(&normals);
 
-    // Visualize depths.
-    // TODO: clamp outsider values.
-    // Note that the stannum impl takes the 1/4 3/4 min/max rather than full
-    // min/max, then clamps
-    let depth_min = depths.min();
-    let depth_max = depths.max();
+    let (depth_min, depth_max) = limited_range(depths.as_slice(), depths.len() / 16);
     eprintln!("depths within [ {},  {} ]", depth_min, depth_max);
     // let depths_to_gray =
     //     |z| ((z - depth_min) / (depth_max - depth_min) * (256.0 * 256.0 - 1.0)) as u16;
     let depth_to_u8 = |z: &f32| {
         let scaled = (z - depth_min) / (depth_max - depth_min);
-        (scaled * 256.0) as u8
+        (scaled.clamp(0.0, 1.0) * 256.0) as u8
     };
     Ok(image_from_matrix(&depths, depth_to_u8))
 }
