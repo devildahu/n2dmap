@@ -1,0 +1,15 @@
+[package]
+name = "n2dmap"
+authors = ["Nicola Papale"]
+description = "Generate depth map from normal maps using fourier decomposition"
+license = "MPL-2.0"
+readme = "Readme.md"
+keywords = ["normal map", "depth map", "height map", "displacement map"]
+categories = ["game-development"]
+repository = "https://github.com/devildahu/n2dmap"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+image = { workspace = true }
+fft2d = { workspace = true }

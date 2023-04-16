@@ -1,0 +1,15 @@
+[package]
+name = "bevy_mod_n2dmap"
+authors = ["Nicola Papale"]
+description = "normal to depth map conversion for bevy"
+license = "MPL-2.0"
+readme = "Readme.md"
+keywords = ["normal map", "depth map", "height map", "displacement map", "bevy"]
+categories = ["game-development"]
+repository = "https://github.com/devildahu/n2dmap"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { workspace = true }
+n2dmap = { path = "../n2dmap" }

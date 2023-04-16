@@ -1,0 +1,15 @@
+[package]
+name = "n2dmap_cli"
+authors = ["Nicola Papale"]
+description = "normal to depth map conversion, CLI tool"
+license = "MPL-2.0"
+readme = "Readme.md"
+keywords = ["normal map", "depth map", "height map", "displacement map"]
+categories = ["game-development"]
+repository = "https://github.com/devildahu/n2dmap"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+clap = { workspace = true }
+n2dmap = { path = "../n2dmap" }
