@@ -1,52 +1,41 @@
 // SPDX-License-Identifier: MPL-2.0
 
-use std::io::{BufWriter, Write};
+use std::error::Error;
 
 use fft2d::nalgebra::dcst::{dct_2d, idct_2d};
-use image::{GrayImage, ImageBuffer, Luma, Primitive, Rgb};
-use nalgebra::{
-    allocator::Allocator, DMatrix, DefaultAllocator, Dim, MatrixSlice, Scalar, Vector2, Vector3,
-};
-use show_image::create_window;
+use image::{ImageBuffer, Luma, Primitive, Rgb};
+use nalgebra::{DMatrix, Scalar, Vector2, Vector3};
 
-#[show_image::main]
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Open image from disk.
-    let img = image::open("data/cat-normal-map.png")?.into_rgb8();
-    let window_in = create_window("input normals", Default::default())?;
-    window_in.set_image("Input image", img.clone())?;
-    window_in.wait_until_destroyed()?;
+pub type NormalMap = ImageBuffer<Rgb<u8>, Vec<u8>>;
+pub type DepthMap = ImageBuffer<Luma<u8>, Vec<u8>>;
 
+pub fn normal_to_depth(normal_map: NormalMap) -> Result<DepthMap, Box<dyn Error>> {
     // Extract normals.
-    let mut normals = matrix_from_rgb_image(&img, |x| *x as f32 / 255.0);
+    let mut normals = matrix_from_rgb_image(&normal_map, |x| *x as f32 / 255.0);
     for n in normals.iter_mut() {
         if n.x + n.y + n.z != 0.0 {
-            n.x = (n.x - 0.5) * -2.0;
+            n.x = (n.x - 0.5) * 2.0;
             n.y = (n.y - 0.5) * -2.0;
             n.z = (n.z - 0.5).max(0.001) * -2.0;
             n.normalize_mut();
         }
     }
-
     let depths = normal_integration(&normals);
-    mat_show("depth", depths.slice_range(.., ..));
-
-    // Save depth map as OBJ.
-    eprintln!("Saving data/cat.obj to disk");
-    save_as_obj("data/cat.obj", &depths).unwrap();
 
     // Visualize depths.
+    // TODO: clamp outsider values.
+    // Note that the stannum impl takes the 1/4 3/4 min/max rather than full
+    // min/max, then clamps
     let depth_min = depths.min();
     let depth_max = depths.max();
     eprintln!("depths within [ {},  {} ]", depth_min, depth_max);
-    let depths_to_gray =
-        |z| ((z - depth_min) / (depth_max - depth_min) * (256.0 * 256.0 - 1.0)) as u16;
-    let depth_img = image_from_matrix(&depths, depths_to_gray);
-
-    // Save depth image to disk.
-    eprintln!("Saving data/cat-depth.png to disk");
-    depth_img.save("data/cat-depth.png").unwrap();
-    Ok(())
+    // let depths_to_gray =
+    //     |z| ((z - depth_min) / (depth_max - depth_min) * (256.0 * 256.0 - 1.0)) as u16;
+    let depth_to_u8 = |z: &f32| {
+        let scaled = (z - depth_min) / (depth_max - depth_min);
+        (scaled * 256.0) as u8
+    };
+    Ok(image_from_matrix(&depths, depth_to_u8))
 }
 
 /// Orthographic integration of a normal field into a depth map.
@@ -70,9 +59,6 @@ fn normal_integration(normals: &DMatrix<Vector3<f32>>) -> DMatrix<f32> {
             *gy = -n.y / n.z;
         }
     }
-
-    mat_show("gx", gradient_x.slice_range(.., ..));
-    mat_show("gy", gradient_y.slice_range(.., ..));
 
     // Depth map by Poisson solver, up to an additive constant.
     dct_poisson(&gradient_y, &gradient_x)
@@ -175,83 +161,7 @@ fn dct_poisson(p: &DMatrix<f32>, q: &DMatrix<f32>) -> DMatrix<f32> {
 /// Iterator of the shape (row, column) where row increases first.
 fn coordinates_column_major(shape: (usize, usize)) -> impl Iterator<Item = (usize, usize)> {
     let (nrows, ncols) = shape;
-    (0..ncols)
-        .map(move |j| (0..nrows).map(move |i| (i, j)))
-        .flatten()
-}
-
-// Helpers ###############################################################################
-
-fn mat_show<'a, R, C, RStride, CStride>(
-    title: &str,
-    mat: MatrixSlice<'a, f32, R, C, RStride, CStride>,
-) where
-    R: Dim,
-    C: Dim,
-    RStride: Dim,
-    CStride: Dim,
-    DefaultAllocator: Allocator<f32, C, R>,
-{
-    let mat = mat.to_owned().transpose();
-    let mat_min = mat.min();
-    let mat_max = mat.max();
-    let mat_mean = mat.mean();
-    eprintln!(
-        "{} values: min: {}, mean: {}, max: {}",
-        title, mat_min, mat_mean, mat_max
-    );
-    let img_data: Vec<u8> = mat
-        .iter()
-        .map(|x| ((x - mat_min) / (mat_max - mat_min) * 255.0) as u8)
-        .collect();
-    let (width, height) = mat.shape();
-    let img_transposed = GrayImage::from_raw(width as u32, height as u32, img_data).unwrap();
-    let window = create_window(title, Default::default()).unwrap();
-    window.set_image("", img_transposed).unwrap();
-    window.wait_until_destroyed().unwrap();
-}
-
-// OBJ Mesh ##############################################################################
-
-fn save_as_obj(path: &str, depth_map: &DMatrix<f32>) -> std::io::Result<()> {
-    // Convert the depth map into a height map for the visualization (z is reversed).
-    let z_min = depth_map.min();
-    let z_max = depth_map.max();
-    let transform = |z| z_min + z_max - z;
-
-    // Open the output file in write mode.
-    let file = std::fs::File::create(path)?;
-    let mut buf_writer = BufWriter::new(file);
-
-    // Write vertices coordinates with a float precision such that scale enables roughly 16bits (65536) precision.
-    let (height, width) = depth_map.shape();
-    let scale = z_max - z_min;
-    let precision = (-(scale / 65536.0).log10()).ceil().max(0.0) as usize;
-    for ((y, x), z) in coordinates_column_major((height, width)).zip(depth_map) {
-        writeln!(
-            &mut buf_writer,
-            // swap y to have y up positive
-            "v {} -{} {:.prec$}",
-            x,
-            y,
-            transform(z),
-            prec = precision,
-        )?;
-    }
-
-    // Write all (square) faces.
-    for (y, x) in coordinates_column_major((height - 1, width - 1)) {
-        let top_left = height * x + y + 1; // +1 since the count starts at 1
-        let bot_left = top_left + 1;
-        let bot_right = bot_left + height;
-        let top_right = bot_right - 1;
-        writeln!(
-            &mut buf_writer,
-            "f {} {} {} {}",
-            top_left, bot_left, bot_right, top_right,
-        )?;
-    }
-    Ok(())
+    (0..ncols).flat_map(move |j| (0..nrows).map(move |i| (i, j)))
 }
 
 // Image <-> Matrix ######################################################################
@@ -261,11 +171,12 @@ fn save_as_obj(path: &str, depth_map: &DMatrix<f32>) -> std::io::Result<()> {
 ///
 /// This performs a transposition to accomodate for the
 /// column major matrix into the row major image.
-#[allow(clippy::cast_possible_truncation)]
-fn image_from_matrix<'a, T: Scalar, U: 'static + Primitive, F: Fn(&'a T) -> U>(
-    mat: &'a DMatrix<T>,
-    to_gray: F,
-) -> ImageBuffer<Luma<U>, Vec<U>> {
+fn image_from_matrix<'a, T, F, U>(mat: &'a DMatrix<T>, to_gray: F) -> ImageBuffer<Luma<U>, Vec<U>>
+where
+    U: 'static + Primitive,
+    T: Scalar,
+    F: Fn(&'a T) -> U,
+{
     let (nb_rows, nb_cols) = mat.shape();
     let mut img_buf = ImageBuffer::new(nb_cols as u32, nb_rows as u32);
     for (x, y, pixel) in img_buf.enumerate_pixels_mut() {
@@ -276,10 +187,15 @@ fn image_from_matrix<'a, T: Scalar, U: 'static + Primitive, F: Fn(&'a T) -> U>(
 
 /// Convert an RGB image into a `Vector3<T>` RGB matrix.
 /// Inverse operation of `rgb_from_matrix`.
-fn matrix_from_rgb_image<'a, T: 'static + Primitive, U: Scalar, F: Fn(&'a T) -> U>(
+fn matrix_from_rgb_image<'a, T, F, U>(
     img: &'a ImageBuffer<Rgb<T>, Vec<T>>,
     scale: F,
-) -> DMatrix<Vector3<U>> {
+) -> DMatrix<Vector3<U>>
+where
+    T: 'static + Primitive,
+    U: Scalar,
+    F: Fn(&'a T) -> U,
+{
     // TODO: improve the suboptimal allocation in addition to transposition.
     let (width, height) = img.dimensions();
     DMatrix::from_iterator(
